@@ -6,6 +6,7 @@ import { DatabaseModule } from './database/database.module';
 import { ParkingModule } from './parking/parking.module';
 import { AuthModule } from './auth/auth.module';
 import { SchedulesModule } from './schedules/schedules.module';
+import { TestDbController } from './test-db.controller';
 
 @Module({
   imports: [
@@ -17,7 +18,7 @@ import { SchedulesModule } from './schedules/schedules.module';
     AuthModule,
     SchedulesModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, TestDbController],
   providers: [AppService],
 })
 export class AppModule {}
