@@ -1,17 +1,30 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../database/database.service';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 
 interface UserRow {
   id: number;
   email: string;
   role: string;
+  user_category?: string | null;
   full_name?: string | null;
   nickname?: string | null;
   is_active?: boolean | null;
   password_value?: string | null;
+}
+
+interface BcryptModule {
+  compare: (plain: string, hash: string) => Promise<boolean>;
+  hash: (plain: string, saltRounds: number) => Promise<string>;
 }
 
 @Injectable()
@@ -21,6 +34,102 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
+
+  async register(dto: RegisterDto) {
+    const fullName = dto.fullName?.trim();
+    const nickname = dto.nickname?.trim();
+    const email = dto.email?.trim().toLowerCase();
+    const password = dto.password ?? '';
+    const confirmPassword = dto.confirmPassword ?? '';
+
+    if (!fullName || !nickname || !email || !password || !confirmPassword) {
+      throw new BadRequestException({
+        success: false,
+        message: 'Los campos obligatorios deben ser completados',
+      });
+    }
+
+    if (!email.endsWith('@ucb.edu.bo')) {
+      throw new BadRequestException({
+        success: false,
+        message: 'Solo se permiten correos institucionales @ucb.edu.bo',
+      });
+    }
+
+    if (password.length < 6) {
+      throw new BadRequestException({
+        success: false,
+        message: 'La contraseña debe tener al menos 6 caracteres',
+      });
+    }
+
+    if (confirmPassword.length < 6) {
+      throw new BadRequestException({
+        success: false,
+        message: 'La confirmación de contraseña debe tener al menos 6 caracteres',
+      });
+    }
+
+    if (password !== confirmPassword) {
+      throw new BadRequestException({
+        success: false,
+        message: 'Las contraseñas no coinciden',
+      });
+    }
+
+    const roleValue = 'USUARIO';
+    const userCategoryValue = 'ESTUDIANTE';
+
+    const existing = await this.databaseService.query<{ id: number }>(
+      `
+        SELECT id
+        FROM users
+        WHERE lower(email) = $1
+        LIMIT 1;
+      `,
+      [email],
+    );
+
+    if (existing.rows.length > 0) {
+      throw new ConflictException({
+        success: false,
+        message: 'El correo ya está registrado',
+      });
+    }
+
+    const passwordHash = await this.hashPassword(password);
+
+    const insertResult = await this.databaseService.query<UserRow>(
+      `
+        INSERT INTO users (full_name, nickname, email, password_hash, role, user_category, is_active)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id, full_name, nickname, email, role, user_category, is_active;
+      `,
+      [fullName, nickname, email, passwordHash, roleValue, userCategoryValue, true],
+    );
+
+    const user = insertResult.rows[0];
+    if (!user) {
+      throw new InternalServerErrorException({
+        success: false,
+        message: 'No se pudo registrar el usuario',
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Usuario registrado correctamente',
+      data: {
+        id: Number(user.id),
+        fullName: user.full_name ?? '',
+        nickname: user.nickname ?? '',
+        email: user.email,
+        role: user.role,
+        userCategory: user.user_category ?? userCategoryValue,
+        isActive: user.is_active ?? true,
+      },
+    };
+  }
 
   async login(dto: LoginDto) {
     const email = dto.email.trim().toLowerCase();
@@ -121,13 +230,23 @@ export class AuthService {
     return /^\$2[aby]\$/.test(value);
   }
 
-  private async tryLoadBcrypt(): Promise<
-    { compare: (plain: string, hash: string) => Promise<boolean> } | null
-  > {
+  private async hashPassword(plainPassword: string): Promise<string> {
+    const bcrypt = await this.tryLoadBcrypt();
+    if (!bcrypt) {
+      throw new InternalServerErrorException({
+        success: false,
+        message: 'No se pudo proteger la contraseña',
+      });
+    }
+
+    return bcrypt.hash(plainPassword, 10);
+  }
+
+  private async tryLoadBcrypt(): Promise<BcryptModule | null> {
     try {
       // Use dynamic import via eval to avoid hard dependency when bcrypt is not installed.
       const mod = await (0, eval)('import("bcrypt")');
-      return mod as { compare: (plain: string, hash: string) => Promise<boolean> };
+      return mod as BcryptModule;
     } catch (error) {
       return null;
     }
