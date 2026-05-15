@@ -26,6 +26,7 @@ interface AvailabilityRaw {
   totalOccupied: number;
   totalOccupancyPercent: number;
   status: string;
+  lastMapUpdateAt: string | null;
 }
 
 interface AvailabilitySummary {
@@ -47,7 +48,8 @@ interface AvailabilitySummary {
     occupancyPercentage: number;
   };
   generalStatus: string;
-  updatedAt: string;
+  lastMapUpdateAt: string | null;
+  updatedAt: string | null;
 }
 
 interface ParkingSpaceRow {
@@ -66,7 +68,25 @@ interface ParkingSpacesAvailabilityRow {
   autos_maintenance: string | number;
 }
 
+interface MapLastUpdateRow {
+  last_map_update_at: string | null;
+}
+
+interface MapSummaryRow {
+  free: string | number;
+  occupied: string | number;
+  maintenance: string | number;
+}
+
+interface MapLastUpdate {
+  lastMapUpdateAt: string | null;
+  minutesSinceLastUpdate: number | null;
+  isStale: boolean;
+  staleThresholdMinutes: number;
+}
+
 const MOTORCYCLE_CAPACITY = 30;
+const MAP_STALE_THRESHOLD_MINUTES = 5;
 
 @Injectable()
 export class ParkingService {
@@ -75,33 +95,35 @@ export class ParkingService {
   constructor(private readonly databaseService: DatabaseService) {}
 
   async getAvailabilityRaw(): Promise<AvailabilityRaw> {
-    const [availabilityResult, spacesAvailabilityResult] = await Promise.all([
-      this.databaseService.query(`
-        SELECT
-          parking_lot_id,
-          parking_lot_name,
-          autos_capacity,
-          autos_occupied,
-          autos_available,
-          motos_capacity,
-          motos_occupied,
-          motos_available,
-          total_capacity,
-          total_occupied,
-          total_occupancy_percent,
-          status
-        FROM vw_general_availability
-        LIMIT 1;
-      `),
-      this.databaseService.query<ParkingSpacesAvailabilityRow>(`
-        SELECT
-          COUNT(*)::int AS autos_capacity,
-          COUNT(*) FILTER (WHERE status = 'OCUPADO')::int AS autos_occupied,
-          COUNT(*) FILTER (WHERE status = 'MANTENIMIENTO')::int AS autos_maintenance
-        FROM parking_spaces
-        WHERE vehicle_type = 'AUTO';
-      `),
-    ]);
+    const [availabilityResult, spacesAvailabilityResult, lastUpdate] =
+      await Promise.all([
+        this.databaseService.query(`
+          SELECT
+            parking_lot_id,
+            parking_lot_name,
+            autos_capacity,
+            autos_occupied,
+            autos_available,
+            motos_capacity,
+            motos_occupied,
+            motos_available,
+            total_capacity,
+            total_occupied,
+            total_occupancy_percent,
+            status
+          FROM vw_general_availability
+          LIMIT 1;
+        `),
+        this.databaseService.query<ParkingSpacesAvailabilityRow>(`
+          SELECT
+            COUNT(*)::int AS autos_capacity,
+            COUNT(*) FILTER (WHERE status = 'OCUPADO')::int AS autos_occupied,
+            COUNT(*) FILTER (WHERE status = 'MANTENIMIENTO')::int AS autos_maintenance
+          FROM parking_spaces
+          WHERE vehicle_type = 'AUTO';
+        `),
+        this.getLastMapUpdate(),
+      ]);
 
     const data = availabilityResult.rows[0];
     const spacesAvailability = spacesAvailabilityResult.rows[0];
@@ -151,6 +173,7 @@ export class ParkingService {
         totalOccupancyPercent,
         autosAvailable + motosAvailable,
       ),
+      lastMapUpdateAt: lastUpdate.lastMapUpdateAt,
     };
   }
 
@@ -168,20 +191,29 @@ export class ParkingService {
   }
 
   async getMapInfo() {
-    const [availability, spacesResult] = await Promise.all([
-      this.getAvailabilityRaw(),
-      this.databaseService.query(`
-        SELECT
-          id,
-          code AS space_code,
-          COALESCE(svg_element_id, code) AS svg_element_id,
-          vehicle_type,
-          status
-        FROM parking_spaces
-        WHERE vehicle_type = 'AUTO'
-        ORDER BY vehicle_type, sort_number;
-      `),
-    ]);
+    const [availability, spacesResult, summaryResult, lastUpdate] =
+      await Promise.all([
+        this.getAvailabilityRaw(),
+        this.databaseService.query(`
+          SELECT
+            id,
+            code AS space_code,
+            COALESCE(svg_element_id, code) AS svg_element_id,
+            vehicle_type,
+            status
+          FROM parking_spaces
+          WHERE vehicle_type = 'AUTO'
+          ORDER BY vehicle_type, sort_number;
+        `),
+        this.getMapSummary(),
+        this.getLastMapUpdate(),
+      ]);
+
+    const summary = summaryResult.rows[0] ?? {
+      free: 0,
+      occupied: 0,
+      maintenance: 0,
+    };
 
     const areas = [
       {
@@ -219,21 +251,30 @@ export class ParkingService {
         status: row.status,
         svgElementId: row.svg_element_id,
       })),
-      updatedAt: new Date().toISOString(),
+      summary: {
+        free: Number(summary.free),
+        occupied: Number(summary.occupied),
+        maintenance: Number(summary.maintenance),
+      },
+      lastUpdate,
+      updatedAt: lastUpdate.lastMapUpdateAt,
     };
   }
 
   async getMapStatus() {
-    const result = await this.databaseService.query(`
-      SELECT
-        code AS space_code,
-        COALESCE(svg_element_id, code) AS svg_element_id,
-        vehicle_type,
-        status
-      FROM parking_spaces
-      WHERE vehicle_type = 'AUTO'
-      ORDER BY vehicle_type, sort_number;
-    `);
+    const [result, lastUpdate] = await Promise.all([
+      this.databaseService.query(`
+        SELECT
+          code AS space_code,
+          COALESCE(svg_element_id, code) AS svg_element_id,
+          vehicle_type,
+          status
+        FROM parking_spaces
+        WHERE vehicle_type = 'AUTO'
+        ORDER BY vehicle_type, sort_number;
+      `),
+      this.getLastMapUpdate(),
+    ]);
 
     return {
       spaces: result.rows.map((row) => ({
@@ -242,6 +283,8 @@ export class ParkingService {
         vehicleType: row.vehicle_type,
         status: row.status,
       })),
+      updatedAt: lastUpdate.lastMapUpdateAt,
+      lastUpdate,
     };
   }
 
@@ -291,6 +334,52 @@ export class ParkingService {
     return this.mapParkingSpace(space);
   }
 
+  private async getMapSummary() {
+    return this.databaseService.query<MapSummaryRow>(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'LIBRE')::int AS free,
+        COUNT(*) FILTER (WHERE status = 'OCUPADO')::int AS occupied,
+        COUNT(*) FILTER (WHERE status = 'MANTENIMIENTO')::int AS maintenance
+      FROM parking_spaces
+      WHERE vehicle_type = 'AUTO';
+    `);
+  }
+
+  private async getLastMapUpdate(): Promise<MapLastUpdate> {
+    const result = await this.databaseService.query<MapLastUpdateRow>(`
+      SELECT MAX(updated_at)::text AS last_map_update_at
+      FROM parking_spaces;
+    `);
+
+    return this.buildMapLastUpdate(result.rows[0]?.last_map_update_at ?? null);
+  }
+
+  private buildMapLastUpdate(value: Date | string | null): MapLastUpdate {
+    const lastMapUpdateAt = this.toIsoString(value);
+
+    if (!lastMapUpdateAt) {
+      return {
+        lastMapUpdateAt: null,
+        minutesSinceLastUpdate: null,
+        isStale: true,
+        staleThresholdMinutes: MAP_STALE_THRESHOLD_MINUTES,
+      };
+    }
+
+    const lastUpdateTime = new Date(lastMapUpdateAt).getTime();
+    const minutesSinceLastUpdate = Math.max(
+      Math.floor((Date.now() - lastUpdateTime) / 60000),
+      0,
+    );
+
+    return {
+      lastMapUpdateAt,
+      minutesSinceLastUpdate,
+      isStale: minutesSinceLastUpdate >= MAP_STALE_THRESHOLD_MINUTES,
+      staleThresholdMinutes: MAP_STALE_THRESHOLD_MINUTES,
+    };
+  }
+
   private mapParkingSpace(row: ParkingSpaceRow): ParkingSpaceResponse {
     return {
       id: Number(row.id),
@@ -300,6 +389,10 @@ export class ParkingService {
       status: row.status,
       occupiedAt: this.toIsoString(row.occupied_at),
       updatedAt: this.toIsoString(row.updated_at),
+      lastMapUpdateAt: this.toIsoString(row.updated_at),
+      minutesSinceLastUpdate: 0,
+      isStale: false,
+      staleThresholdMinutes: MAP_STALE_THRESHOLD_MINUTES,
     };
   }
 
@@ -308,9 +401,15 @@ export class ParkingService {
       return null;
     }
 
-    return value instanceof Date
-      ? value.toISOString()
-      : new Date(value).toISOString();
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+
+    const normalizedValue = value.trim().replace(' ', 'T');
+    const hasTimeZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalizedValue);
+    const utcValue = hasTimeZone ? normalizedValue : `${normalizedValue}Z`;
+
+    return new Date(utcValue).toISOString();
   }
 
   private buildAvailabilitySummary(raw: AvailabilityRaw): AvailabilitySummary {
@@ -349,7 +448,8 @@ export class ParkingService {
         occupancyPercentage,
         totalAvailable,
       ),
-      updatedAt: new Date().toISOString(),
+      lastMapUpdateAt: raw.lastMapUpdateAt,
+      updatedAt: raw.lastMapUpdateAt,
     };
   }
 

@@ -52,7 +52,7 @@ export class ParkingController {
   async getMap(): Promise<Record<string, unknown>> {
     return {
       success: true,
-      message: 'Información del mapa obtenida correctamente',
+      message: 'Mapa obtenido correctamente',
       data: await this.parkingService.getMapInfo(),
     };
   }
@@ -60,7 +60,7 @@ export class ParkingController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('USUARIO', 'ADMINISTRADOR', 'GUARDIA')
   @Get('map/status')
-  async getMapStatus() {
+  async getMapStatus(): Promise<Record<string, unknown>> {
     return this.parkingService.getMapStatus();
   }
 

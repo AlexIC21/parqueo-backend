@@ -14,6 +14,10 @@ export interface ParkingSpaceResponse {
   status: string;
   occupiedAt: string | null;
   updatedAt: string | null;
+  lastMapUpdateAt?: string | null;
+  minutesSinceLastUpdate?: number | null;
+  isStale?: boolean;
+  staleThresholdMinutes?: number;
 }
 
 const getSocketCorsOrigin = () => {
