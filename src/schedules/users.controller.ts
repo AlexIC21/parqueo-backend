@@ -19,18 +19,12 @@ interface AuthUser {
   role: string;
 }
 
-@Controller('api/v1/schedules')
+@Controller('api/v1/users')
 @UseGuards(JwtAuthGuard, RolesGuard)
-export class SchedulesController {
+export class UsersController {
   constructor(private readonly schedulesService: SchedulesService) {}
 
-  @Get()
-  @Roles('USUARIO')
-  async getSchedules(@CurrentUser() user: AuthUser) {
-    return this.schedulesService.getSchedules(user.id);
-  }
-
-  @Get('me')
+  @Get('me/schedule')
   @Roles('USUARIO')
   async getMySchedule(@CurrentUser() user: AuthUser) {
     const data = await this.schedulesService.getUserSchedule(user.id);
@@ -45,23 +39,7 @@ export class SchedulesController {
     };
   }
 
-  @Post()
-  @Roles('USUARIO')
-  @UsePipes(scheduleValidationPipe)
-  async createSchedule(
-    @CurrentUser() user: AuthUser,
-    @Body() dto: CreateScheduleDto,
-  ) {
-    const data = await this.schedulesService.createSchedule(user.id, dto);
-
-    return {
-      success: true,
-      message: 'Clase agregada correctamente',
-      data,
-    };
-  }
-
-  @Post('me')
+  @Post('me/schedule')
   @Roles('USUARIO')
   @UsePipes(scheduleValidationPipe)
   async createMySchedule(

@@ -7,6 +7,9 @@ import { ParkingModule } from './parking/parking.module';
 import { AuthModule } from './auth/auth.module';
 import { SchedulesModule } from './schedules/schedules.module';
 import { TestDbController } from './test-db.controller';
+import { AlertPreferencesModule } from './alert-preferences/alert-preferences.module';
+import { GuardModule } from './guard/guard.module';
+import { IncidentsModule } from './incidents/incidents.module';
 
 @Module({
   imports: [
@@ -17,6 +20,9 @@ import { TestDbController } from './test-db.controller';
     ParkingModule,
     AuthModule,
     SchedulesModule,
+    AlertPreferencesModule,
+    GuardModule,
+    IncidentsModule,
   ],
   controllers: [AppController, TestDbController],
   providers: [AppService],

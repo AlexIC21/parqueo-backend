@@ -147,7 +147,7 @@ export class AuthService {
 
     const result = await this.databaseService.query<UserRow>(
       `
-      SELECT id, email, role, full_name, nickname, is_active, ${passwordColumn} AS password_value
+      SELECT id, email, role, user_category, full_name, nickname, is_active, ${passwordColumn} AS password_value
       FROM users
       WHERE lower(email) = $1
       LIMIT 1;
@@ -175,6 +175,8 @@ export class AuthService {
       sub: Number(user.id),
       email: user.email,
       role: user.role,
+      nickname: user.nickname ?? '',
+      fullName: user.full_name ?? '',
     };
 
     const accessToken = this.jwtService.sign(payload, { secret: jwtSecret });
@@ -184,9 +186,12 @@ export class AuthService {
       accessToken,
       user: {
         id: Number(user.id),
+        fullName: user.full_name ?? '',
+        nickname: user.nickname ?? '',
         email: user.email,
         name: user.full_name ?? user.nickname ?? '',
         role: user.role,
+        userCategory: user.user_category ?? null,
       },
     };
   }
