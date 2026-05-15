@@ -1,8 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
+  ParseIntPipe,
   Post,
+  Put,
   UseGuards,
   UsePipes,
 } from '@nestjs/common';
@@ -51,6 +55,38 @@ export class UsersController {
     return {
       success: true,
       message: 'Clase agregada correctamente',
+      data,
+    };
+  }
+
+  @Put('me/schedule/:id')
+  @Roles('USUARIO')
+  @UsePipes(scheduleValidationPipe)
+  async updateMySchedule(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateScheduleDto,
+  ) {
+    const data = await this.schedulesService.updateSchedule(user.id, id, dto);
+
+    return {
+      success: true,
+      message: 'Clase actualizada correctamente',
+      data,
+    };
+  }
+
+  @Delete('me/schedule/:id')
+  @Roles('USUARIO')
+  async deleteMySchedule(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const data = await this.schedulesService.deleteSchedule(user.id, id);
+
+    return {
+      success: true,
+      message: 'Clase eliminada correctamente',
       data,
     };
   }
