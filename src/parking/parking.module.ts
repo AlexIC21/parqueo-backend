@@ -9,6 +9,6 @@ import { ParkingGateway } from './parking.gateway';
   imports: [DatabaseModule, AuthModule],
   controllers: [ParkingController],
   providers: [ParkingService, ParkingGateway],
-  exports: [ParkingService],
+  exports: [ParkingService, ParkingGateway],
 })
 export class ParkingModule {}

@@ -49,4 +49,16 @@ export class ParkingGateway
   emitSpaceUpdated(space: ParkingSpaceResponse): void {
     this.server.emit('parking.space.updated', space);
   }
+
+  emitIncidentCreated(payload: Record<string, unknown>): void {
+    this.server.emit('incident.created', payload);
+  }
+
+  emitIncidentResolved(payload: Record<string, unknown>): void {
+    this.server.emit('incident.resolved', payload);
+  }
+
+  emitIncidentCancelled(payload: Record<string, unknown>): void {
+    this.server.emit('incident.cancelled', payload);
+  }
 }

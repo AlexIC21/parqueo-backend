@@ -1,16 +1,24 @@
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsInt, IsNotEmpty, IsString, MaxLength, Min } from 'class-validator';
 
 export class CreateIncidentDto {
   @IsString()
-  @MaxLength(120)
+  @IsNotEmpty()
+  @MaxLength(80)
+  type: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(160)
   title: string;
 
   @IsString()
+  @IsNotEmpty()
   @MaxLength(1000)
   description: string;
 
-  @IsString()
-  @IsOptional()
-  @MaxLength(40)
-  severity?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  parkingLotId: number;
 }
