@@ -28,12 +28,13 @@ export class ParkingController {
 
     return {
       success: true,
-      message: 'Disponibilidad actual obtenida correctamente',
+      message: 'Disponibilidad obtenida correctamente',
       data: availability.summary,
       parkingLotId: availability.raw.parkingLotId,
       parkingLotName: availability.raw.parkingLotName,
       autosCapacity: availability.raw.autosCapacity,
       autosOccupied: availability.raw.autosOccupied,
+      autosMaintenance: availability.raw.autosMaintenance,
       autosAvailable: availability.raw.autosAvailable,
       motosCapacity: availability.raw.motosCapacity,
       motosOccupied: availability.raw.motosOccupied,

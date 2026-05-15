@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
@@ -16,6 +17,7 @@ interface AvailabilityRaw {
   parkingLotName: string;
   autosCapacity: number;
   autosOccupied: number;
+  autosMaintenance: number;
   autosAvailable: number;
   motosCapacity: number;
   motosOccupied: number;
@@ -30,6 +32,7 @@ interface AvailabilitySummary {
   cars: {
     available: number;
     occupied: number;
+    maintenance: number;
     totalCapacity: number;
   };
   motorcycles: {
@@ -60,12 +63,15 @@ interface ParkingSpaceRow {
 interface ParkingSpacesAvailabilityRow {
   autos_capacity: string | number;
   autos_occupied: string | number;
+  autos_maintenance: string | number;
 }
 
 const MOTORCYCLE_CAPACITY = 30;
 
 @Injectable()
 export class ParkingService {
+  private readonly logger = new Logger(ParkingService.name);
+
   constructor(private readonly databaseService: DatabaseService) {}
 
   async getAvailabilityRaw(): Promise<AvailabilityRaw> {
@@ -90,7 +96,8 @@ export class ParkingService {
       this.databaseService.query<ParkingSpacesAvailabilityRow>(`
         SELECT
           COUNT(*)::int AS autos_capacity,
-          COUNT(*) FILTER (WHERE status = 'OCUPADO')::int AS autos_occupied
+          COUNT(*) FILTER (WHERE status = 'OCUPADO')::int AS autos_occupied,
+          COUNT(*) FILTER (WHERE status = 'MANTENIMIENTO')::int AS autos_maintenance
         FROM parking_spaces
         WHERE vehicle_type = 'AUTO';
       `),
@@ -105,28 +112,45 @@ export class ParkingService {
 
     const autosCapacity = Number(spacesAvailability?.autos_capacity ?? 71);
     const autosOccupied = Number(spacesAvailability?.autos_occupied ?? 0);
+    const autosMaintenance = Number(
+      spacesAvailability?.autos_maintenance ?? 0,
+    );
+    const autosAvailable = Math.max(
+      autosCapacity - autosOccupied - autosMaintenance,
+      0,
+    );
     const motosCapacity = MOTORCYCLE_CAPACITY;
     const motosOccupied = Number(data.motos_occupied ?? 0);
+    const motosAvailable = Math.max(motosCapacity - motosOccupied, 0);
     const totalCapacity = autosCapacity + motosCapacity;
     const totalOccupied = autosOccupied + motosOccupied;
+    const totalUnavailable = autosOccupied + autosMaintenance + motosOccupied;
     const totalOccupancyPercent =
       totalCapacity > 0
-        ? Number(((totalOccupied / totalCapacity) * 100).toFixed(2))
+        ? Number(((totalUnavailable / totalCapacity) * 100).toFixed(2))
         : 0;
+
+    this.logger.log(
+      `[AVAILABILITY] totalAutos=${autosCapacity} occupiedAutos=${autosOccupied} maintenanceAutos=${autosMaintenance} availableAutos=${autosAvailable}`,
+    );
 
     return {
       parkingLotId: Number(data.parking_lot_id),
       parkingLotName: data.parking_lot_name,
       autosCapacity,
       autosOccupied,
-      autosAvailable: Math.max(autosCapacity - autosOccupied, 0),
+      autosMaintenance,
+      autosAvailable,
       motosCapacity,
       motosOccupied,
-      motosAvailable: Math.max(motosCapacity - motosOccupied, 0),
+      motosAvailable,
       totalCapacity,
       totalOccupied,
       totalOccupancyPercent,
-      status: data.status,
+      status: this.getGeneralStatus(
+        totalOccupancyPercent,
+        autosAvailable + motosAvailable,
+      ),
     };
   }
 
@@ -165,11 +189,9 @@ export class ParkingService {
         name: 'Zona Autos',
         vehicleType: 'CAR',
         totalSpaces: availability.autosCapacity,
-        availableSpaces: Math.max(
-          availability.autosCapacity - availability.autosOccupied,
-          0,
-        ),
+        availableSpaces: availability.autosAvailable,
         occupiedSpaces: availability.autosOccupied,
+        maintenanceSpaces: availability.autosMaintenance,
       },
       {
         id: 2,
@@ -292,18 +314,24 @@ export class ParkingService {
   }
 
   private buildAvailabilitySummary(raw: AvailabilityRaw): AvailabilitySummary {
-    const carsAvailable = Math.max(raw.autosCapacity - raw.autosOccupied, 0);
+    const carsAvailable = Math.max(
+      raw.autosCapacity - raw.autosOccupied - raw.autosMaintenance,
+      0,
+    );
     const motosAvailable = Math.max(raw.motosCapacity - raw.motosOccupied, 0);
-    const totalAvailable = Math.max(raw.totalCapacity - raw.totalOccupied, 0);
+    const totalUnavailable =
+      raw.autosOccupied + raw.autosMaintenance + raw.motosOccupied;
+    const totalAvailable = Math.max(raw.totalCapacity - totalUnavailable, 0);
     const occupancyPercentage =
       raw.totalCapacity > 0
-        ? Number(((raw.totalOccupied / raw.totalCapacity) * 100).toFixed(2))
+        ? Number(((totalUnavailable / raw.totalCapacity) * 100).toFixed(2))
         : 0;
 
     return {
       cars: {
         available: carsAvailable,
         occupied: raw.autosOccupied,
+        maintenance: raw.autosMaintenance,
         totalCapacity: raw.autosCapacity,
       },
       motorcycles: {
@@ -317,13 +345,16 @@ export class ParkingService {
         totalCapacity: raw.totalCapacity,
         occupancyPercentage,
       },
-      generalStatus: this.getGeneralStatus(occupancyPercentage),
+      generalStatus: this.getGeneralStatus(
+        occupancyPercentage,
+        totalAvailable,
+      ),
       updatedAt: new Date().toISOString(),
     };
   }
 
-  private getGeneralStatus(occupancyPercentage: number) {
-    if (occupancyPercentage >= 100) {
+  private getGeneralStatus(occupancyPercentage: number, available = 1) {
+    if (available <= 0 || occupancyPercentage >= 100) {
       return 'LLENO';
     }
 

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { ParkingService } from '../parking/parking.service';
 
 interface CounterState {
   carsLeaving: number;
@@ -22,46 +22,28 @@ export class GuardService {
     updatedAt: new Date().toISOString(),
   };
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(private readonly parkingService: ParkingService) {}
 
   async getDashboard() {
-    const availability = await this.databaseService.query(`
-      SELECT
-        parking_lot_id,
-        parking_lot_name,
-        autos_capacity,
-        autos_occupied,
-        autos_available,
-        motos_capacity,
-        motos_occupied,
-        motos_available,
-        total_capacity,
-        total_occupied,
-        total_occupancy_percent,
-        status
-      FROM vw_general_availability
-      LIMIT 1;
-    `);
-
-    const data = availability.rows[0] ?? null;
+    const availability = await this.parkingService.getAvailabilityBundle();
+    const data = availability.raw;
 
     return {
-      availability: data
-        ? {
-            parkingLotId: Number(data.parking_lot_id),
-            parkingLotName: data.parking_lot_name,
-            autosCapacity: Number(data.autos_capacity),
-            autosOccupied: Number(data.autos_occupied),
-            autosAvailable: Number(data.autos_available),
-            motosCapacity: Number(data.motos_capacity),
-            motosOccupied: Number(data.motos_occupied),
-            motosAvailable: Number(data.motos_available),
-            totalCapacity: Number(data.total_capacity),
-            totalOccupied: Number(data.total_occupied),
-            totalOccupancyPercent: Number(data.total_occupancy_percent),
-            status: data.status,
-          }
-        : null,
+      availability: {
+        parkingLotId: data.parkingLotId,
+        parkingLotName: data.parkingLotName,
+        autosCapacity: data.autosCapacity,
+        autosOccupied: data.autosOccupied,
+        autosMaintenance: data.autosMaintenance,
+        autosAvailable: data.autosAvailable,
+        motosCapacity: data.motosCapacity,
+        motosOccupied: data.motosOccupied,
+        motosAvailable: data.motosAvailable,
+        totalCapacity: data.totalCapacity,
+        totalOccupied: data.totalOccupied,
+        totalOccupancyPercent: data.totalOccupancyPercent,
+        status: data.status,
+      },
       counters: this.counters,
     };
   }
