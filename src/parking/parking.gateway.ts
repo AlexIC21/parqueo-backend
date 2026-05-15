@@ -61,4 +61,8 @@ export class ParkingGateway
   emitIncidentCancelled(payload: Record<string, unknown>): void {
     this.server.emit('incident.cancelled', payload);
   }
+
+  emitNotificationCreated(payload: Record<string, unknown>): void {
+    this.server.emit('user.notification.created', payload);
+  }
 }

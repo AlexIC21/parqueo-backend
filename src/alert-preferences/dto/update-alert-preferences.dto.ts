@@ -1,12 +1,25 @@
 import {
+  IsArray,
   IsBoolean,
   IsEmpty,
   IsIn,
   IsInt,
+  IsOptional,
   Max,
   Min,
+  ValidateNested,
   ValidateIf,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class SelectedScheduleAlertDto {
+  @IsInt()
+  @Min(1)
+  scheduleId: number;
+
+  @IsBoolean()
+  enabled: boolean;
+}
 
 export class UpdateAlertPreferencesDto {
   @IsEmpty()
@@ -27,6 +40,13 @@ export class UpdateAlertPreferencesDto {
   @IsIn(['AUTO', 'MOTO'])
   vehicleType: 'AUTO' | 'MOTO';
 
+  @IsOptional()
   @IsBoolean()
-  onlyFirstClassPerDay: boolean;
+  onlyFirstClassPerDay?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SelectedScheduleAlertDto)
+  selectedScheduleAlerts?: SelectedScheduleAlertDto[];
 }

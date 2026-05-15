@@ -6,9 +6,10 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '../database/database.service';
+import { ParkingGateway } from '../parking/parking.gateway';
 import { ParkingService } from '../parking/parking.service';
 
-const DAILY_FIRST_CLASS_ALERT = 'DAILY_FIRST_CLASS_ALERT';
+const CLASS_SCHEDULE_ALERT = 'CLASS_SCHEDULE_ALERT';
 const TIME_ZONE = 'America/La_Paz';
 
 interface AlertPreferenceRow {
@@ -58,6 +59,7 @@ export class NotificationsService implements OnModuleInit {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly parkingService: ParkingService,
+    private readonly parkingGateway: ParkingGateway,
   ) {}
 
   async onModuleInit() {
@@ -65,42 +67,44 @@ export class NotificationsService implements OnModuleInit {
   }
 
   @Cron(CronExpression.EVERY_MINUTE, { timeZone: TIME_ZONE })
-  async generateDailyFirstClassAlerts() {
+  async generateClassScheduleAlerts() {
     const nowServer = new Date();
     const now = this.getLocalDateTimeParts(nowServer);
+    const currentMinutes = now.hours * 60 + now.minutes;
 
-    this.logger.log('[HU22][CRON] Ejecutando revision de alertas');
-    this.logger.log(`[HU22][CRON] nowServer=${nowServer.toISOString()}`);
     this.logger.log(
-      `[HU22][CRON] nowLaPaz=${now.date} ${this.minutesToTime(
-        now.hours * 60 + now.minutes,
-      )}`,
-    );
-    this.logger.log(`[HU22][CRON] dayOfWeek=${now.dayOfWeek}`);
-    this.logger.log(
-      `[HU22][CRON] currentTime=${this.minutesToTime(
-        now.hours * 60 + now.minutes,
+      `[CLASS-ALERT][CRON] nowLaPaz=${now.date} ${this.minutesToTime(
+        currentMinutes,
+      )} dayOfWeek=${now.dayOfWeek} currentTime=${this.minutesToTime(
+        currentMinutes,
       )}`,
     );
 
     try {
-      const preferences = await this.getActiveAlertPreferences();
+      const preferences = await this.getAlertPreferences();
 
-      this.logger.log(`[HU22][PREFS] usuariosConAlertas=${preferences.length}`);
+      this.logger.log(
+        `[CLASS-ALERT][PREFS] usuariosConPreferencias=${preferences.length}`,
+      );
 
       for (const preference of preferences) {
         this.logger.log(
-          `[HU22][PREFS] userId=${preference.user_id} enabled=${preference.enabled} ` +
-            `minutesBefore=${preference.minutes_before} ` +
-            `onlyFirstClassPerDay=${preference.only_first_class_per_day} ` +
-            `vehicleType=${preference.vehicle_type}`,
+          `[CLASS-ALERT][USER] userId=${preference.user_id} enabled=${preference.enabled} ` +
+            `minutesBefore=${preference.minutes_before}`,
         );
 
         try {
-          await this.generateUserDailyFirstClassAlert(preference, now);
+          if (!preference.enabled) {
+            this.logger.log(
+              `[CLASS-ALERT][USER] userId=${preference.user_id} alertas desactivadas`,
+            );
+            continue;
+          }
+
+          await this.generateUserClassScheduleAlerts(preference, now);
         } catch (error) {
           this.logger.error(
-            `[HU22][ERROR] userId=${preference.user_id} error=${
+            `[CLASS-ALERT][ERROR] userId=${preference.user_id} error=${
               error instanceof Error ? error.message : 'Error desconocido'
             }`,
             error instanceof Error ? error.stack : undefined,
@@ -109,7 +113,7 @@ export class NotificationsService implements OnModuleInit {
       }
     } catch (error) {
       this.logger.error(
-        `[HU22][ERROR] error=${
+        `[CLASS-ALERT][ERROR] error=${
           error instanceof Error ? error.message : 'Error desconocido'
         }`,
         error instanceof Error ? error.stack : undefined,
@@ -117,41 +121,25 @@ export class NotificationsService implements OnModuleInit {
     }
   }
 
-  private async generateUserDailyFirstClassAlert(
+  private async generateUserClassScheduleAlerts(
     preference: AlertPreferenceRow,
     now: LocalDateTimeParts,
   ) {
-    const classes = await this.getTodayClasses(
-      preference.user_id,
-      now.dayOfWeek,
-    );
+    const classes = await this.getTodayClasses(preference.user_id, now.dayOfWeek);
 
     this.logger.log(
-      `[HU22][SCHEDULE] userId=${preference.user_id} dayOfWeek=${now.dayOfWeek} clasesHoy=${classes.length}`,
+      `[CLASS-ALERT][SCHEDULES] userId=${preference.user_id} count=${classes.length}`,
     );
 
     for (const classItem of classes) {
       this.logger.log(
-        `[HU22][SCHEDULE] clase id=${classItem.id} subject=${classItem.subject} ` +
-          `startTime=${this.formatTime(classItem.start_time)} classroom=${classItem.classroom ?? ''}`,
+        `[CLASS-ALERT][SCHEDULE] scheduleId=${classItem.id} subject=${classItem.subject} startTime=${this.formatTime(
+          classItem.start_time,
+        )}`,
       );
+
+      await this.generateCandidateAlert(preference, classItem, now);
     }
-
-    if (classes.length === 0) {
-      this.logger.log(
-        `[HU22][SCHEDULE] userId=${preference.user_id} no tiene clases hoy. No se genera alerta.`,
-      );
-      return;
-    }
-
-    const firstClass = classes[0];
-
-    this.logger.log(
-      `[HU22][FIRST_CLASS] userId=${preference.user_id} selectedClassId=${firstClass.id} ` +
-        `subject=${firstClass.subject} startTime=${this.formatTime(firstClass.start_time)}`,
-    );
-
-    await this.generateCandidateAlert(preference, firstClass, now);
   }
 
   async getUserNotifications(userId: number) {
@@ -166,7 +154,8 @@ export class NotificationsService implements OnModuleInit {
         alert_date,
         scheduled_for,
         delivered_at,
-        read_at
+        read_at,
+        created_at
       FROM user_notifications
       WHERE user_id = $1
       ORDER BY created_at DESC, id DESC;
@@ -195,7 +184,8 @@ export class NotificationsService implements OnModuleInit {
         alert_date,
         scheduled_for,
         delivered_at,
-        read_at;
+        read_at,
+        created_at;
     `,
       [notificationId, userId],
     );
@@ -238,20 +228,31 @@ export class NotificationsService implements OnModuleInit {
             delivered_at TIMESTAMP NULL,
             read_at TIMESTAMP NULL,
             created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            CONSTRAINT user_notifications_user_type_alert_date_unique
-              UNIQUE (user_id, type, alert_date)
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
           )',
           users_id_type
         );
       END $$;
+
+      ALTER TABLE user_notifications
+        DROP CONSTRAINT IF EXISTS user_notifications_user_type_alert_date_unique;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_user_notifications_daily_first_unique
+        ON user_notifications (user_id, type, alert_date)
+        WHERE type = 'DAILY_FIRST_CLASS_ALERT';
+
+      DROP INDEX IF EXISTS idx_user_notifications_schedule_class_unique;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_user_notifications_schedule_class_unique
+        ON user_notifications (user_id, type, alert_date, ((data->>'scheduleId')))
+        WHERE type = 'CLASS_SCHEDULE_ALERT';
 
       CREATE INDEX IF NOT EXISTS idx_user_notifications_user_created_at
         ON user_notifications (user_id, created_at DESC);
     `);
   }
 
-  private async getActiveAlertPreferences() {
+  private async getAlertPreferences() {
     const result = await this.databaseService.query<AlertPreferenceRow>(
       `
       SELECT
@@ -259,13 +260,11 @@ export class NotificationsService implements OnModuleInit {
         preferences.enabled,
         preferences.minutes_before,
         preferences.vehicle_type,
-        COALESCE(preferences.only_first_class_per_day, TRUE) AS only_first_class_per_day
+        COALESCE(preferences.only_first_class_per_day, FALSE) AS only_first_class_per_day
       FROM user_alert_preferences preferences
       INNER JOIN users users
         ON users.id = preferences.user_id
-      WHERE preferences.enabled = TRUE
-        AND COALESCE(preferences.only_first_class_per_day, TRUE) = TRUE
-        AND users.role = 'USUARIO'
+      WHERE users.role = 'USUARIO'
         AND users.is_active = TRUE;
     `,
     );
@@ -295,67 +294,62 @@ export class NotificationsService implements OnModuleInit {
 
   private async generateCandidateAlert(
     preference: AlertPreferenceRow,
-    firstClass: ScheduleClassRow,
+    classItem: ScheduleClassRow,
     now: LocalDateTimeParts,
   ) {
-    const startMinutes = this.timeToMinutes(firstClass.start_time);
+    const startMinutes = this.timeToMinutes(classItem.start_time);
     const minutesBefore = Number(preference.minutes_before ?? 0);
     const alertMinutes = startMinutes - minutesBefore;
     const currentMinutes = now.hours * 60 + now.minutes;
     const shouldGenerate = alertMinutes >= 0 && alertMinutes === currentMinutes;
 
     this.logger.log(
-      `[HU22][TIME] userId=${preference.user_id} classStart=${this.formatTime(
-        firstClass.start_time,
-      )} minutesBefore=${minutesBefore} alertTime=${this.formatMinutesForLog(
+      `[CLASS-ALERT][TIME] scheduleId=${classItem.id} startTime=${this.formatTime(
+        classItem.start_time,
+      )} alertTime=${this.formatMinutesForLog(
         alertMinutes,
-      )} currentTime=${this.minutesToTime(currentMinutes)} shouldGenerate=${shouldGenerate}`,
+      )} currentTime=${this.minutesToTime(
+          currentMinutes,
+        )} shouldGenerate=${shouldGenerate}`,
     );
 
     if (!shouldGenerate) {
-      this.logger.log(
-        `[HU22][TIME] userId=${preference.user_id} todavia no corresponde generar alerta.`,
-      );
       return;
     }
 
-    const duplicateExists = await this.hasDailyAlert(
+    const duplicateExists = await this.hasScheduleAlert(
       preference.user_id,
       now.date,
+      Number(classItem.id),
     );
 
     this.logger.log(
-      `[HU22][DUPLICATE] userId=${preference.user_id} alertDate=${now.date} exists=${duplicateExists}`,
+      `[CLASS-ALERT][DUPLICATE] scheduleId=${classItem.id} exists=${duplicateExists}`,
     );
 
     if (duplicateExists) {
-      this.logger.log(
-        `[HU22][DUPLICATE] userId=${preference.user_id} ya tiene alerta generada hoy. No se duplica.`,
-      );
       return;
     }
 
     const availability = await this.parkingService.getAvailabilitySummary();
     this.logger.log(
-      `[HU22][AVAILABILITY] cars=${availability.cars.available}/${availability.cars.totalCapacity} ` +
+      `[CLASS-ALERT][AVAILABILITY] cars=${availability.cars.available}/${availability.cars.totalCapacity} ` +
         `motorcycles=${availability.motorcycles.available}/${availability.motorcycles.totalCapacity} ` +
         `occupancy=${availability.total.occupancyPercentage} generalStatus=${availability.generalStatus}`,
     );
 
-    const startTime = this.formatTime(firstClass.start_time);
+    const startTime = this.formatTime(classItem.start_time);
     const scheduledFor = `${now.date} ${this.minutesToTime(alertMinutes)}:00`;
-    const title = 'Disponibilidad antes de tu primera clase';
+    const title = 'Disponibilidad del parqueo';
     const message =
-      `Tu primera materia de hoy es ${firstClass.subject} a las ${startTime}. ` +
-      `Autos disponibles: ${availability.cars.available}/${availability.cars.totalCapacity}. ` +
-      `Motos disponibles: ${availability.motorcycles.available}/${availability.motorcycles.totalCapacity}.`;
+      availability.cars.available > 0
+        ? `Quedan ${availability.cars.available} espacios disponibles.`
+        : 'Ya no quedan espacios disponibles.';
     const data = {
-      class: {
-        id: Number(firstClass.id),
-        subject: firstClass.subject,
-        startTime,
-        classroom: firstClass.classroom,
-      },
+      scheduleId: Number(classItem.id),
+      subject: classItem.subject,
+      startTime,
+      classroom: classItem.classroom,
       availability: {
         cars: {
           available: availability.cars.available,
@@ -365,8 +359,6 @@ export class NotificationsService implements OnModuleInit {
           available: availability.motorcycles.available,
           totalCapacity: availability.motorcycles.totalCapacity,
         },
-        occupancyPercentage: availability.total.occupancyPercentage,
-        generalStatus: availability.generalStatus,
       },
     };
 
@@ -396,8 +388,7 @@ export class NotificationsService implements OnModuleInit {
         NOW(),
         NOW()
       )
-      ON CONFLICT (user_id, type, alert_date)
-      DO NOTHING
+      ON CONFLICT DO NOTHING
       RETURNING
         id,
         user_id,
@@ -408,11 +399,12 @@ export class NotificationsService implements OnModuleInit {
         alert_date,
         scheduled_for,
         delivered_at,
-        read_at;
+        read_at,
+        created_at;
     `,
       [
         preference.user_id,
-        DAILY_FIRST_CLASS_ALERT,
+        CLASS_SCHEDULE_ALERT,
         title,
         message,
         JSON.stringify(data),
@@ -425,24 +417,25 @@ export class NotificationsService implements OnModuleInit {
 
     if (!notification) {
       this.logger.log(
-        `[HU22][DUPLICATE] userId=${preference.user_id} insercion omitida por duplicado concurrente.`,
+        `[CLASS-ALERT][DUPLICATE] scheduleId=${classItem.id} exists=true`,
       );
       return;
     }
 
     this.logger.log(
-      `[HU22][NOTIFICATION_CREATED] id=${notification.id} userId=${notification.user_id} ` +
-        `type=${notification.type} title=${notification.title} scheduledFor=${this.toIsoString(
-          notification.scheduled_for,
-        )} alertDate=${this.toDateString(notification.alert_date)}`,
+      `[CLASS-ALERT][CREATED] notificationId=${notification.id} scheduleId=${classItem.id}`,
     );
-    this.logger.log(
-      `[HU22][SOCKET] No hay gateway de notificaciones de usuario configurado. ` +
-        `No se emite user.notification.created para userId=${notification.user_id} notificationId=${notification.id}.`,
+    this.parkingGateway.emitNotificationCreated(
+      this.mapNotification(notification),
     );
+    this.logger.log('[CLASS-ALERT][SOCKET] emitted user.notification.created');
   }
 
-  private async hasDailyAlert(userId: number, alertDate: string) {
+  private async hasScheduleAlert(
+    userId: number,
+    alertDate: string,
+    scheduleId: number,
+  ) {
     const result = await this.databaseService.query<{ exists: boolean }>(
       `
       SELECT EXISTS (
@@ -451,9 +444,10 @@ export class NotificationsService implements OnModuleInit {
         WHERE user_id = $1
           AND type = $2
           AND alert_date = $3::date
+          AND data->>'scheduleId' = $4
       ) AS exists;
     `,
-      [userId, DAILY_FIRST_CLASS_ALERT, alertDate],
+      [userId, CLASS_SCHEDULE_ALERT, alertDate, String(scheduleId)],
     );
 
     return result.rows[0]?.exists === true;
@@ -536,6 +530,7 @@ export class NotificationsService implements OnModuleInit {
       scheduledFor: this.toIsoString(row.scheduled_for),
       deliveredAt: this.toIsoString(row.delivered_at),
       readAt: this.toIsoString(row.read_at),
+      createdAt: this.toIsoString(row.created_at ?? null),
     };
   }
 

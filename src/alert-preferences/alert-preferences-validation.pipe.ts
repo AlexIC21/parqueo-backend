@@ -33,14 +33,14 @@ export const alertPreferencesValidationPipe = new ValidationPipe({
     ) {
       return new BadRequestException({
         success: false,
-        message: 'Los minutos de anticipación deben estar entre 1 y 180',
+        message: 'Los minutos de anticipacion deben estar entre 1 y 180',
       });
     }
 
     if (hasError('vehicleType', 'isIn')) {
       return new BadRequestException({
         success: false,
-        message: 'El tipo de vehículo debe ser AUTO o MOTO',
+        message: 'El tipo de vehiculo debe ser AUTO o MOTO',
       });
     }
 
@@ -48,13 +48,27 @@ export const alertPreferencesValidationPipe = new ValidationPipe({
       return new BadRequestException({
         success: false,
         message:
-          'La opción de primera clase del día debe ser verdadera o falsa',
+          'La opcion de primera clase del dia debe ser verdadera o falsa',
+      });
+    }
+
+    if (
+      hasError('selectedScheduleAlerts', 'isArray') ||
+      errors.some(
+        (error) =>
+          error.property === 'selectedScheduleAlerts' &&
+          error.children?.some((child) => child.children?.length),
+      )
+    ) {
+      return new BadRequestException({
+        success: false,
+        message: 'La seleccion de materias para alertas es invalida',
       });
     }
 
     return new BadRequestException({
       success: false,
-      message: 'Datos inválidos',
+      message: 'Datos invalidos',
     });
   },
 });
