@@ -12,6 +12,7 @@ import { AlertPreferencesModule } from './alert-preferences/alert-preferences.mo
 import { GuardModule } from './guard/guard.module';
 import { IncidentsModule } from './incidents/incidents.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ScreenModule } from './screen/screen.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     GuardModule,
     IncidentsModule,
     NotificationsModule,
+    ScreenModule,
   ],
   controllers: [AppController, TestDbController],
   providers: [AppService],

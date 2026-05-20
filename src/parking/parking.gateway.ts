@@ -4,7 +4,7 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
+import { Server } from 'socket.io';
 
 export interface ParkingSpaceResponse {
   id: number;
@@ -42,11 +42,11 @@ export class ParkingGateway
   @WebSocketServer()
   private readonly server: Server;
 
-  handleConnection(_client: Socket) {
+  handleConnection() {
     return;
   }
 
-  handleDisconnect(_client: Socket) {
+  handleDisconnect() {
     return;
   }
 
@@ -68,5 +68,13 @@ export class ParkingGateway
 
   emitNotificationCreated(payload: Record<string, unknown>): void {
     this.server.emit('user.notification.created', payload);
+  }
+
+  emitScreenCounterUpdated(payload: unknown): void {
+    this.server.emit('screen.counter.updated', payload);
+  }
+
+  emitContadorUpdated(payload: unknown): void {
+    this.server.emit('contador.updated', payload);
   }
 }
